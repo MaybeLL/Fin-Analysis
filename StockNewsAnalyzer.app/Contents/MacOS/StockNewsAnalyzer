@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# 获取应用包路径
+APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RESOURCES_DIR="$APP_DIR/Resources"
+
+# 切换到资源目录
+cd "$RESOURCES_DIR"
+
+# 设置Python路径
+export PYTHONPATH="$RESOURCES_DIR:$PYTHONPATH"
+
+# 启动Python应用
+python3 run_app.py

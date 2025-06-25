@@ -1,0 +1,23 @@
+{
+  "stocks": [
+    "AAPL",
+    "GOOGL", 
+    "MSFT",
+    "TSLA",
+    "AMZN"
+  ],
+  "api_keys": {
+    "alpha_vantage": "OW5KUVYMPD59R7TO",
+    "finnhub": "YOUR_FINNHUB_API_KEY"
+  },
+  "schedule": {
+    "interval_hours": 4,
+    "start_time": "09:00"
+  },
+  "analysis": {
+    "sentiment_threshold": 0.1,
+    "max_news_per_stock": 50,
+    "use_finbert": true,
+    "model_cache_dir": "./models"
+  }
+}

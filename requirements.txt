@@ -1,0 +1,5 @@
+requests
+textblob
+schedule
+transformers
+torch
