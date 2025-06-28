@@ -9,6 +9,7 @@ from tkinter import ttk, messagebox, filedialog
 import json
 import threading
 import time
+import webbrowser
 from datetime import datetime
 from typing import Dict, List, Any
 from stock_news_analyzer import StockNewsAnalyzer, NewsDatabase
@@ -19,33 +20,44 @@ class StockNewsGUI:
     """股票新闻分析GUI应用"""
     
     def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("📈 股票新闻情感分析仪表板")
-        self.root.geometry("1200x800")
-        self.root.configure(bg='#f0f0f0')
-        
-        # 设置应用图标和样式
-        self.setup_styles()
-        
-        # 初始化数据
-        self.analyzer = StockNewsAnalyzer()
-        self.database = NewsDatabase()
-        self.monitored_stocks = self.analyzer.config.get("stocks", [])
-        self.selected_stock = tk.StringVar(value=self.monitored_stocks[0] if self.monitored_stocks else "")
-        self.time_range = tk.IntVar(value=7)
-        
-        # 定时任务控制
-        self.scheduler_running = False
-        self.scheduler_thread = None
-        
-        # 创建主界面
-        self.create_main_interface()
-        
-        # 绑定窗口关闭事件
-        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
-        
-        # 初始化加载数据
-        self.refresh_overview()
+        try:
+            self.root = tk.Tk()
+            self.root.title("📈 股票新闻情感分析仪表板")
+            self.root.geometry("1200x800")
+            self.root.configure(bg='#f0f0f0')
+            
+            # 设置应用图标和样式
+            self.setup_styles()
+            
+            # 初始化数据
+            print("正在初始化分析器...")
+            self.analyzer = StockNewsAnalyzer()
+            self.database = NewsDatabase()
+            self.monitored_stocks = self.analyzer.config.get("stocks", [])
+            self.selected_stock = tk.StringVar(value=self.monitored_stocks[0] if self.monitored_stocks else "")
+            self.time_range = tk.IntVar(value=7)
+            self.analysis_method = tk.StringVar(value="auto")  # auto, finbert, lightweight
+            
+            # 定时任务控制
+            self.scheduler_running = False
+            self.scheduler_thread = None
+            
+            # 创建主界面
+            print("正在创建界面...")
+            self.create_main_interface()
+            
+            # 绑定窗口关闭事件
+            self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+            
+            # 延迟加载数据（避免阻塞GUI启动）
+            print("应用初始化完成！")
+            self.root.after(1000, self.delayed_refresh)  # 1秒后刷新数据
+            
+        except Exception as e:
+            print(f"GUI初始化失败: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
     
     def setup_styles(self):
         """设置UI样式"""
@@ -150,11 +162,19 @@ class StockNewsGUI:
         stock_combo.grid(row=0, column=1, padx=(0, 30))
         stock_combo.bind('<<ComboboxSelected>>', lambda e: self.on_stock_selected())
         
+        # 分析算法选择
+        ttk.Label(control_frame, text="🧠 分析算法:", style='Heading.TLabel').grid(row=0, column=2, sticky=tk.W, padx=(0, 10))
+        
+        algorithm_combo = ttk.Combobox(control_frame, textvariable=self.analysis_method,
+                                     values=["auto", "finbert", "lightweight"], state='readonly', width=12)
+        algorithm_combo.grid(row=0, column=3, padx=(0, 30))
+        algorithm_combo.bind('<<ComboboxSelected>>', lambda e: self.on_algorithm_changed())
+        
         # 时间范围
-        ttk.Label(control_frame, text="📅 时间范围:", style='Heading.TLabel').grid(row=0, column=2, sticky=tk.W, padx=(0, 10))
+        ttk.Label(control_frame, text="📅 时间范围:", style='Heading.TLabel').grid(row=1, column=0, sticky=tk.W, padx=(0, 10), pady=(10, 0))
         
         time_frame = ttk.Frame(control_frame)
-        time_frame.grid(row=0, column=3, padx=(0, 30))
+        time_frame.grid(row=1, column=1, columnspan=3, padx=(0, 30), pady=(10, 0), sticky=tk.W)
         
         time_options = [(1, "1天"), (3, "3天"), (7, "7天"), (14, "14天"), (30, "30天")]
         for i, (value, text) in enumerate(time_options):
@@ -164,7 +184,7 @@ class StockNewsGUI:
         
         # 操作按钮
         button_frame = ttk.Frame(control_frame)
-        button_frame.grid(row=1, column=0, columnspan=4, pady=(15, 0), sticky=tk.W)
+        button_frame.grid(row=2, column=0, columnspan=4, pady=(15, 0), sticky=tk.W)
         
         ttk.Button(button_frame, text="🔄 刷新数据", command=self.refresh_data).grid(row=0, column=0, padx=(0, 10))
         ttk.Button(button_frame, text="📊 生成报告", command=self.generate_report).grid(row=0, column=1, padx=(0, 10))
@@ -181,7 +201,7 @@ class StockNewsGUI:
         overview_frame.columnconfigure(0, weight=1)
         
         # 创建滚动区域
-        canvas = tk.Canvas(overview_frame, height=150, bg='white')
+        canvas = tk.Canvas(overview_frame, height=220, bg='white')
         scrollbar = ttk.Scrollbar(overview_frame, orient="horizontal", command=canvas.xview)
         scrollable_frame = ttk.Frame(canvas)
         
@@ -354,7 +374,8 @@ class StockNewsGUI:
                 self.analyzer.run_once()
                 self.root.after(0, self.on_refresh_complete)
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("刷新失败", str(e)))
+                error_msg = str(e)
+                self.root.after(0, lambda: messagebox.showerror("刷新失败", error_msg))
         
         # 在后台线程中运行
         threading.Thread(target=refresh_thread, daemon=True).start()
@@ -367,7 +388,8 @@ class StockNewsGUI:
                 self.analyzer.collect_news_for_stock(stock_code)
                 self.root.after(0, self.on_refresh_complete)
             except Exception as e:
-                self.root.after(0, lambda: messagebox.showerror("刷新失败", str(e)))
+                error_msg = str(e)
+                self.root.after(0, lambda: messagebox.showerror("刷新失败", error_msg))
         
         threading.Thread(target=refresh_stock_thread, daemon=True).start()
     
@@ -435,14 +457,82 @@ class StockNewsGUI:
             count_label.grid(row=4, column=0, pady=(5, 0))
             
             # 详情按钮
-            detail_button = ttk.Button(card, text="详情", width=8,
+            detail_button = ttk.Button(card, text="详情", width=10,
                                      command=lambda s=stock: self.show_stock_detail(s))
-            detail_button.grid(row=5, column=0, pady=(5, 0))
+            detail_button.grid(row=5, column=0, pady=(5, 2), sticky=tk.W+tk.E)
+            
+            # 刷新数据按钮
+            refresh_button = ttk.Button(card, text="刷新数据", width=10,
+                                      command=lambda s=stock: self.refresh_single_stock(s))
+            refresh_button.grid(row=6, column=0, pady=(2, 2), sticky=tk.W+tk.E)
+            
+            # 导出报告按钮
+            export_button = ttk.Button(card, text="导出报告", width=10,
+                                     command=lambda s=stock: self.export_single_report(s))
+            export_button.grid(row=7, column=0, pady=(2, 5), sticky=tk.W+tk.E)
     
     def show_stock_detail(self, stock):
         """显示股票详情"""
         self.selected_stock.set(stock)
         self.update_detail_view()
+    
+    def refresh_single_stock(self, stock):
+        """刷新单个股票数据"""
+        def refresh_thread():
+            try:
+                print(f"正在刷新 {stock} 的数据...")
+                self.analyzer.collect_news_for_stock(stock)
+                self.root.after(0, lambda: self.on_single_refresh_complete(stock))
+            except Exception as e:
+                error_msg = str(e)
+                self.root.after(0, lambda: messagebox.showerror("刷新失败", f"刷新 {stock} 失败: {error_msg}"))
+        
+        # 在后台线程中运行
+        threading.Thread(target=refresh_thread, daemon=True).start()
+        messagebox.showinfo("刷新中", f"正在后台刷新 {stock} 数据，请稍候...")
+    
+    def on_single_refresh_complete(self, stock):
+        """单个股票刷新完成回调"""
+        self.refresh_overview()
+        if self.selected_stock.get() == stock:
+            self.update_detail_view()
+        self.update_status_info()
+        messagebox.showinfo("刷新完成", f"{stock} 数据已更新")
+    
+    def export_single_report(self, stock):
+        """导出单个股票报告"""
+        try:
+            report = self.analyzer.generate_analysis_report(stock, self.time_range.get())
+            
+            # 格式化报告
+            content = self._format_report(stock, report)
+            
+            # 尝试简单的文件对话框
+            try:
+                filepath = filedialog.asksaveasfilename()
+                if not filepath:
+                    return
+                    
+                # 如果用户没有添加扩展名，自动添加.txt
+                if not filepath.endswith('.txt'):
+                    filepath += '.txt'
+                    
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                messagebox.showinfo("报告已保存", f"{stock} 报告已保存到:\n{filepath}")
+                
+            except Exception as dialog_error:
+                # 如果文件对话框失败，提供一个默认保存位置
+                import os
+                filename = f"{stock}_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                filepath = os.path.join(os.path.expanduser("~/Desktop"), filename)
+                
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                messagebox.showinfo("报告已保存", f"{stock} 报告已保存到桌面:\n{filepath}")
+        
+        except Exception as e:
+            messagebox.showerror("导出失败", f"导出 {stock} 报告失败: {str(e)}")
     
     def update_detail_view(self):
         """更新详细分析视图"""
@@ -455,12 +545,128 @@ class StockNewsGUI:
         # 生成报告
         report = self.analyzer.generate_analysis_report(stock, self.time_range.get())
         
-        # 格式化显示
-        content = self._format_report(stock, report)
-        
-        # 更新文本区域
+        # 清空文本区域
         self.detail_text.delete(1.0, tk.END)
-        self.detail_text.insert(1.0, content)
+        
+        if 'error' in report:
+            self.detail_text.insert(1.0, f"❌ {stock} - {report['error']}")
+            return
+        
+        # 插入基本报告内容
+        content = f"📈 {stock} 详细分析报告\n"
+        content += "=" * 50 + "\n\n"
+        
+        content += f"📊 总览信息:\n"
+        content += f"• 📰 新闻总数: {report['total_news']}条\n"
+        content += f"• 📊 平均情感: {report['average_sentiment_score']:.3f}\n"
+        content += f"• 🎯 整体情感: {report['overall_sentiment']}\n"
+        content += f"• 📅 分析时间: 最近{report['period_days']}天\n\n"
+        
+        content += f"📈 情感分布:\n"
+        sentiment = report['sentiment_distribution']
+        total = report['total_news']
+        
+        if total > 0:
+            pos_pct = int(sentiment['positive'] * 100 / total)
+            neu_pct = int(sentiment['neutral'] * 100 / total)
+            neg_pct = int(sentiment['negative'] * 100 / total)
+            
+            content += f"• 🟢 正面: {sentiment['positive']}条 ({pos_pct}%)\n"
+            content += f"• ⚪ 中性: {sentiment['neutral']}条 ({neu_pct}%)\n"
+            content += f"• 🔴 负面: {sentiment['negative']}条 ({neg_pct}%)\n\n"
+        
+        content += f"📰 最新头条 (点击标题可跳转到原文):\n"
+        self.detail_text.insert(tk.END, content)
+        
+        # 添加可点击的新闻标题
+        self._insert_clickable_headlines(stock, report)
+        
+        # 添加生成时间
+        time_content = f"\n⏰ 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        self.detail_text.insert(tk.END, time_content)
+    
+    def _insert_clickable_headlines(self, stock: str, report: dict):
+        """插入可点击的新闻标题"""
+        # 从数据库获取最新新闻（包含URL）
+        database = NewsDatabase()
+        recent_news = database.get_recent_news(stock, self.time_range.get())
+        
+        if not recent_news:
+            self.detail_text.insert(tk.END, "暂无新闻数据\n")
+            return
+        
+        # 配置超链接样式
+        self.detail_text.tag_config("link", foreground="blue", underline=True)
+        self.detail_text.tag_config("link_hover", foreground="darkblue", underline=True)
+        
+        # 绑定鼠标事件
+        self.detail_text.tag_bind("link", "<Button-1>", self._on_link_click)
+        self.detail_text.tag_bind("link", "<Enter>", self._on_link_enter)
+        self.detail_text.tag_bind("link", "<Leave>", self._on_link_leave)
+        
+        # 插入前5条新闻标题作为超链接
+        for i, news in enumerate(recent_news[:5], 1):
+            title = news.get('title', '无标题')
+            url = news.get('url', '')
+            
+            # 插入序号
+            self.detail_text.insert(tk.END, f"{i}. ")
+            
+            # 插入可点击的标题
+            start_pos = self.detail_text.index(tk.END + " -1c")
+            self.detail_text.insert(tk.END, title)
+            end_pos = self.detail_text.index(tk.END + " -1c")
+            
+            # 创建唯一的tag名称
+            tag_name = f"link_{stock}_{i}"
+            
+            # 应用tag
+            self.detail_text.tag_add(tag_name, start_pos, end_pos)
+            self.detail_text.tag_config(tag_name, foreground="blue", underline=True)
+            
+            # 绑定点击事件
+            self.detail_text.tag_bind(tag_name, "<Button-1>", 
+                                    lambda e, u=url: self._open_news_url(u))
+            self.detail_text.tag_bind(tag_name, "<Enter>", 
+                                    lambda e, t=tag_name: self._on_headline_enter(t))
+            self.detail_text.tag_bind(tag_name, "<Leave>", 
+                                    lambda e, t=tag_name: self._on_headline_leave(t))
+            
+            self.detail_text.insert(tk.END, "\n")
+    
+    def _open_news_url(self, url: str):
+        """打开新闻URL"""
+        if url and url.startswith(('http://', 'https://')):
+            try:
+                webbrowser.open(url)
+            except Exception as e:
+                messagebox.showerror("打开链接失败", f"无法打开链接: {str(e)}")
+        else:
+            messagebox.showwarning("无效链接", "该新闻没有有效的链接地址")
+    
+    def _on_headline_enter(self, tag_name: str):
+        """鼠标进入标题时的效果"""
+        self.detail_text.tag_config(tag_name, foreground="darkblue", 
+                                   underline=True, background="#f0f0f0")
+        self.detail_text.config(cursor="hand2")
+    
+    def _on_headline_leave(self, tag_name: str):
+        """鼠标离开标题时的效果"""
+        self.detail_text.tag_config(tag_name, foreground="blue", 
+                                   underline=True, background="")
+        self.detail_text.config(cursor="")
+    
+    def _on_link_click(self, event):
+        """处理通用链接点击"""
+        pass
+    
+    def _on_link_enter(self, event):
+        """鼠标进入链接"""
+        self.detail_text.config(cursor="hand2")
+    
+    def _on_link_leave(self, event):
+        """鼠标离开链接"""
+        self.detail_text.config(cursor="")
     
     def _format_report(self, stock, report):
         """格式化报告内容"""
@@ -510,18 +716,29 @@ class StockNewsGUI:
             # 格式化报告
             content = self._format_report(stock, report)
             
-            # 保存文件
-            filename = f"{stock}_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            filepath = filedialog.asksaveasfilename(
-                defaultextension=".txt",
-                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-                initialname=filename
-            )
-            
-            if filepath:
+            # 尝试简单的文件对话框
+            try:
+                filepath = filedialog.asksaveasfilename()
+                if not filepath:
+                    return
+                    
+                # 如果用户没有添加扩展名，自动添加.txt
+                if not filepath.endswith('.txt'):
+                    filepath += '.txt'
+                    
                 with open(filepath, 'w', encoding='utf-8') as f:
                     f.write(content)
                 messagebox.showinfo("报告已保存", f"报告已保存到:\n{filepath}")
+                
+            except Exception as dialog_error:
+                # 如果文件对话框失败，提供一个默认保存位置
+                import os
+                filename = f"{stock}_analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+                filepath = os.path.join(os.path.expanduser("~/Desktop"), filename)
+                
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                messagebox.showinfo("报告已保存", f"报告已保存到桌面:\n{filepath}")
         
         except Exception as e:
             messagebox.showerror("生成失败", f"生成报告失败: {str(e)}")
@@ -613,7 +830,20 @@ class StockNewsGUI:
     def update_status_info(self):
         """更新状态信息"""
         # 分析引擎状态
-        engine_status = "FinBERT (已安装)" if self.analyzer.collector else "轻量级金融分析器"
+        algorithm_names = {
+            "auto": "自动选择",
+            "finbert": "FinBERT",
+            "lightweight": "轻量级"
+        }
+        current_method = algorithm_names.get(self.analysis_method.get(), "自动选择")
+        
+        # 检查FinBERT是否真的可用
+        finbert_available = hasattr(self.analyzer, 'finbert_model') and self.analyzer.finbert_model is not None
+        if current_method == "FinBERT" and not finbert_available:
+            engine_status = f"{current_method} (不可用，使用轻量级)"
+        else:
+            engine_status = f"{current_method} 分析器"
+        
         self.status_labels["💡 分析引擎:"].configure(text=engine_status)
         
         # 最后更新时间
@@ -649,6 +879,25 @@ class StockNewsGUI:
         self.refresh_overview()
         self.update_detail_view()
     
+    def on_algorithm_changed(self):
+        """分析算法改变事件"""
+        method = self.analysis_method.get()
+        # 更新分析器的算法选择
+        if hasattr(self.analyzer, 'set_analysis_method'):
+            self.analyzer.set_analysis_method(method)
+        
+        self.refresh_overview()
+        self.update_detail_view()
+        
+        # 显示选择的算法信息
+        algorithm_names = {
+            "auto": "自动选择 (优先FinBERT)",
+            "finbert": "FinBERT (高精度)",
+            "lightweight": "轻量级 (快速)"
+        }
+        self.update_status_info()
+        print(f"算法已切换到: {algorithm_names.get(method, method)}")
+    
     def on_closing(self):
         """窗口关闭事件"""
         if self.scheduler_running:
@@ -657,6 +906,15 @@ class StockNewsGUI:
                 self.root.destroy()
         else:
             self.root.destroy()
+    
+    def delayed_refresh(self):
+        """延迟刷新数据"""
+        try:
+            print("正在加载数据...")
+            self.refresh_overview()
+            print("数据加载完成！")
+        except Exception as e:
+            print(f"数据加载失败: {e}")
     
     def run(self):
         """运行应用"""

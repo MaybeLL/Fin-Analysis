@@ -35,6 +35,7 @@ class NewsAnalyzer:
         self.finbert_tokenizer = None
         self.use_finbert = use_finbert
         self.cache_dir = cache_dir
+        self.analysis_method = "auto"  # auto, finbert, lightweight
         
         if self.use_finbert:
             self._init_finbert()
@@ -42,8 +43,32 @@ class NewsAnalyzer:
     def _init_finbert(self):
         """初始化FinBERT模型"""
         try:
-            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+            # 测试基本模块导入
             import torch
+            print("✓ torch导入成功")
+            
+            import transformers
+            print(f"✓ transformers导入成功，版本: {transformers.__version__}")
+            
+            from transformers import AutoTokenizer, AutoModelForSequenceClassification
+            print("✓ 核心transformers类导入成功")
+            
+            # 测试所有必需的子模块
+            test_modules = [
+                'transformers.models',
+                'transformers.models.bert',
+                'transformers.models.bert.modeling_bert',
+                'transformers.models.bert.configuration_bert',
+                'transformers.models.bert.tokenization_bert'
+            ]
+            
+            for module_name in test_modules:
+                try:
+                    __import__(module_name)
+                    print(f"✓ {module_name} 可用")
+                except ImportError as e:
+                    print(f"⚠ {module_name} 不可用: {e}")
+            
             import os
             
             # 创建缓存目录
@@ -53,23 +78,58 @@ class NewsAnalyzer:
             print("正在加载FinBERT模型...")
             print("首次运行会下载模型文件，请耐心等待...")
             
+            # 尝试加载模型，设置更宽松的参数
             self.finbert_tokenizer = AutoTokenizer.from_pretrained(
-                model_name, cache_dir=self.cache_dir
+                model_name, 
+                cache_dir=self.cache_dir,
+                trust_remote_code=False,
+                local_files_only=False
             )
+            print("✓ FinBERT tokenizer加载成功")
+            
             self.finbert_model = AutoModelForSequenceClassification.from_pretrained(
-                model_name, cache_dir=self.cache_dir
+                model_name, 
+                cache_dir=self.cache_dir,
+                trust_remote_code=False,
+                local_files_only=False,
+                ignore_mismatched_sizes=True
             )
+            print("✓ FinBERT模型加载成功")
             
             # 设置为评估模式
             self.finbert_model.eval()
-            print("FinBERT模型加载成功")
+            print("🎉 FinBERT完全初始化成功")
             
-        except ImportError:
-            print("警告: transformers或torch未安装，将使用备用情感分析方法")
-            print("安装命令: pip install transformers torch")
-        except Exception as e:
-            print(f"警告: FinBERT模型加载失败: {e}")
+        except ImportError as e:
+            print(f"❌ 模块导入失败: {e}")
             print("将使用备用情感分析方法")
+            self.finbert_model = None
+            self.finbert_tokenizer = None
+        except Exception as e:
+            print(f"❌ FinBERT模型加载失败: {e}")
+            print("将使用备用情感分析方法")
+            self.finbert_model = None
+            self.finbert_tokenizer = None
+    
+    def _can_import(self, module_name):
+        """检查是否可以导入模块"""
+        try:
+            __import__(module_name)
+            return True
+        except ImportError:
+            return False
+    
+    def set_analysis_method(self, method: str):
+        """设置分析方法"""
+        if method in ["auto", "finbert", "lightweight"]:
+            self.analysis_method = method
+            print(f"分析方法已设置为: {method}")
+        else:
+            print(f"无效的分析方法: {method}")
+    
+    def get_analysis_method(self) -> str:
+        """获取当前分析方法"""
+        return self.analysis_method
     
     def analyze_sentiment_with_finbert(self, text: str) -> tuple[float, str]:
         """使用FinBERT进行情感分析"""
@@ -215,11 +275,27 @@ class NewsAnalyzer:
         return polarity, label
     
     def analyze_sentiment(self, text: str) -> tuple[float, str]:
-        """分析文本情感 - 优先使用FinBERT"""
-        if self.finbert_model is not None and self.finbert_tokenizer is not None:
-            return self.analyze_sentiment_with_finbert(text)
-        else:
-            return self.analyze_sentiment_fallback(text)
+        """分析文本情感 - 支持算法选择"""
+        method = self.analysis_method
+        
+        # 如果选择FinBERT但不可用，则使用备用方法
+        if method == "finbert":
+            if self.finbert_model is not None and self.finbert_tokenizer is not None:
+                return self.analyze_sentiment_with_finbert(text)
+            else:
+                print("FinBERT不可用，使用轻量级分析")
+                return self._lightweight_financial_analysis(text)
+        
+        # 如果选择轻量级，直接使用轻量级分析
+        elif method == "lightweight":
+            return self._lightweight_financial_analysis(text)
+        
+        # 自动模式：优先FinBERT，不可用则使用轻量级
+        else:  # method == "auto"
+            if self.finbert_model is not None and self.finbert_tokenizer is not None:
+                return self.analyze_sentiment_with_finbert(text)
+            else:
+                return self._lightweight_financial_analysis(text)
     
     def extract_keywords(self, text: str) -> List[str]:
         """提取关键词"""
@@ -409,6 +485,7 @@ class StockNewsAnalyzer:
         self.config = self.load_config(config_file)
         self.collector = None
         self.running = False
+        self.analyzer = NewsAnalyzer()  # 初始化分析器
     
     def load_config(self, config_file: str) -> Dict[str, Any]:
         """加载配置文件"""
@@ -440,9 +517,30 @@ class StockNewsAnalyzer:
             print("请编辑配置文件并添加您的API密钥")
             return default_config
     
+    def set_analysis_method(self, method: str):
+        """设置分析方法"""
+        if hasattr(self, 'analyzer'):
+            self.analyzer.set_analysis_method(method)
+        else:
+            print("分析器未初始化")
+    
+    def get_analysis_method(self) -> str:
+        """获取当前分析方法"""
+        if hasattr(self, 'analyzer'):
+            return self.analyzer.get_analysis_method()
+        return "auto"
+    
     def collect_news_for_stock(self, symbol: str):
         """为单个股票收集新闻"""
         print(f"开始收集 {symbol} 的新闻...")
+        
+        # 确保collector存在
+        if not self.collector:
+            self.collector = NewsCollector(self.config)
+        
+        # 设置分析方法
+        if hasattr(self, 'analyzer'):
+            self.collector.analyzer.set_analysis_method(self.analyzer.get_analysis_method())
         
         all_news = []
         
@@ -470,6 +568,9 @@ class StockNewsAnalyzer:
     def run_collection_cycle(self):
         """运行一次完整的新闻收集周期"""
         self.collector = NewsCollector(self.config)
+        # 设置分析方法
+        if hasattr(self, 'analyzer'):
+            self.collector.analyzer.set_analysis_method(self.analyzer.get_analysis_method())
         
         for symbol in self.config["stocks"]:
             self.collect_news_for_stock(symbol)
